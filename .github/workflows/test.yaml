@@ -469,6 +469,50 @@ jobs:
           rm -f /tmp/gpg-passphrase
           dput "${{ vars.PPA_TARGET }}" try_*_source.changes
 
+  publish-copr:
+    needs: [dist, test-dist]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: copr-release
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          pipx install copr-cli
+
+      - name: Download dist tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: try-dist.tgz
+
+      - name: Download packaging assets
+        uses: actions/download-artifact@v8
+        with:
+          name: packaging-assets
+
+      - name: Build the source RPM
+        run: |
+          tar xzf packaging.tgz
+          version=$(echo try-*.tgz)
+          version=${version#try-}
+          version=${version%.tgz}
+          sed -i "s/^Version:.*/Version:        ${version}/" packaging/rpm/try.spec
+
+          mkdir -p rpmbuild/SOURCES
+          cp try-*.tgz rpmbuild/SOURCES/
+          rpmbuild --define "_topdir $PWD/rpmbuild" -bs packaging/rpm/try.spec
+
+      - name: Submit to COPR
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+        run: |
+          mkdir -p ~/.config
+          echo "$COPR_CONFIG" > ~/.config/copr
+          copr-cli build "${{ vars.COPR_TARGET }}" rpmbuild/SRPMS/*.src.rpm
+          rm -f ~/.config/copr
+
   prerelease:
     needs:
       - test-checkout
