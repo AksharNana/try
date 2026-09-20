@@ -100,6 +100,10 @@ jobs:
     needs: [dist, test-dist]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: true
+      matrix:
+        series: [focal, jammy, noble]
 
     steps:
       - name: Install dependencies
@@ -118,6 +122,8 @@ jobs:
           name: packaging-assets
 
       - name: Assemble Debian source tree
+        env:
+          SERIES: ${{ matrix.series }}
         run: |
           tar xzf try-*.tgz
           srcdir=$(echo try-*/)
@@ -131,9 +137,9 @@ jobs:
           rm -f try-*.tgz packaging.tgz
 
           revision=$(sed -n "1s/^try ([^)-]*-\([0-9]*\)).*/\1/p" "$srcdir/debian/changelog")
-          sed -i "1s/^try ([^)]*)/try (${version}-${revision})/" "$srcdir/debian/changelog"
+          sed -i "1s/^try ([^)]*)/try (${version}-${revision}~${SERIES}1)/" "$srcdir/debian/changelog"
 
-          sed -i "1s/UNRELEASED/noble/" "$srcdir/debian/changelog"
+          sed -i "1s/UNRELEASED/${SERIES}/" "$srcdir/debian/changelog"
           echo "SRCDIR=$srcdir" >> "$GITHUB_ENV"
 
       - name: Build the Debian source package
@@ -148,7 +154,7 @@ jobs:
       - name: Upload Debian source package
         uses: actions/upload-artifact@v7
         with:
-          name: try-ppa-source
+          name: try-ppa-source-${{ matrix.series }}
           path: |
             try_*.dsc
             try_*.orig.tar.gz
@@ -448,10 +454,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y devscripts dput gnupg
 
-      - name: Download the Debian source package
+      - name: Download the Debian source packages
         uses: actions/download-artifact@v8
         with:
-          name: try-ppa-source
+          pattern: try-ppa-source-*
+          merge-multiple: true
 
       - name: Import GPG signing key
         env:
@@ -465,9 +472,12 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.PPA_GPG_PASSPHRASE }}
         run: |
           echo "$GPG_PASSPHRASE" > /tmp/gpg-passphrase
-          debsign -k"$KEYID" -p"gpg --batch --yes --pinentry-mode loopback --passphrase-file /tmp/gpg-passphrase" try_*_source.changes
+          for changes in try_*_source.changes
+          do
+              debsign -k"$KEYID" -p"gpg --batch --yes --pinentry-mode loopback --passphrase-file /tmp/gpg-passphrase" "$changes"
+              dput "${{ vars.PPA_TARGET }}" "$changes"
+          done
           rm -f /tmp/gpg-passphrase
-          dput "${{ vars.PPA_TARGET }}" try_*_source.changes
 
   prerelease:
     needs:
