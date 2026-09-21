@@ -136,10 +136,30 @@ jobs:
           cp -R packaging/debian "$srcdir/debian"
           rm -f try-*.tgz packaging.tgz
 
-          revision=$(sed -n "1s/^try ([^)-]*-\([0-9]*\)).*/\1/p" "$srcdir/debian/changelog")
-          sed -i "1s/^try ([^)]*)/try (${version}-${revision}~${SERIES}1)/" "$srcdir/debian/changelog"
+          changelog="$srcdir/debian/changelog"
+          committed=$(sed -n '1s/^try (\([^)]*\)).*/\1/p' "$changelog")
+          if [ "${committed%-*}" = "$version" ]
+          then
+              # same upstream version: packaging-only revision, keep the committed one
+              revision=${committed##*-}
+          else
+              # new upstream release: start again at revision 1
+              revision=1
+              maintainer=$(sed -n 's/^Maintainer: //p' "$srcdir/debian/control")
+              {
+                  echo "try (${version}-1) UNRELEASED; urgency=medium"
+                  echo
+                  echo "  * New upstream release ${version}."
+                  echo
+                  echo " -- ${maintainer}  $(date -R)"
+                  echo
+                  cat "$changelog"
+              } > "$changelog.new"
+              mv "$changelog.new" "$changelog"
+          fi
+          sed -i "1s/^try ([^)]*)/try (${version}-${revision}~${SERIES}1)/" "$changelog"
 
-          sed -i "1s/UNRELEASED/${SERIES}/" "$srcdir/debian/changelog"
+          sed -i "1s/UNRELEASED/${SERIES}/" "$changelog"
           echo "SRCDIR=$srcdir" >> "$GITHUB_ENV"
 
       - name: Build the Debian source package
